@@ -111,4 +111,85 @@ CREATE TABLE IF NOT EXISTS postgres.magic.transaction (
 )
 ```
 
+after creating the table add the last node 
+
+DATA EXPORTER
+
+```python
+from mage_ai.streaming.sinks.base_python import BasePythonSink
+from typing import List, Dict
+import psycopg2
+
+if 'streaming_sink' not in globals():
+    from mage_ai.data_preparation.decorators import streaming_sink
+
+@streaming_sink
+class CustomSink(BasePythonSink):
+    def init_client(self):
+        """
+        Implement the logic of initializing the client.
+        """
+        # Database connection details
+        self.db_config = {
+            'dbname': 'postgres',
+            'user': 'postgres',
+            'password': 'postgres',
+            'host': 'postgres',
+            'port': 5432,
+        }
+        # Establish a database connection
+        self.conn = psycopg2.connect(**self.db_config)
+        self.cursor = self.conn.cursor()
+
+    def batch_write(self, messages: List[Dict]):
+        """
+        Batch write the messages to the sink.
+
+        For each message, the message format could be one of the following ones:
+        1. message is the whole data to be written into the sink
+        2. message contains the data and metadata with the format {"data": {...}, "metadata": {...}}
+            The data value is the data to be written into the sink. The metadata is used to store
+            extra information that can be used in the write method (e.g. timestamp, index, etc.).
+        """
+        # SQL query to insert data
+        insert_query = """
+        INSERT INTO magic.transaction (
+            transaction_id, user_id, amount, event_timestamp, location, is_fraud
+        ) VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (transaction_id) DO NOTHING;
+        """
+
+        # Insert each message into the database
+        for msg in messages:
+            data = msg.get('data', msg)  # Handles both formats
+            self.cursor.execute(
+                insert_query,
+                (
+                    data['transaction_id'],
+                    data['user_id'],
+                    data['amount'],
+                    data['event_timestamp'],
+                    data['location'],
+                    data['is_fraud'],
+                )
+            )
+
+        # Commit the transaction
+        self.conn.commit()
+
+    def stop(self):
+        """
+        Close the database connection when the sink is stopped.
+        """
+        if self.cursor:
+            self.cursor.close()
+        if self.conn:
+            self.conn.close()
+
+    def __del__(self):
+        # Ensure the database connection is closed when the sink is deleted
+        self.stop()
+
+```
+
 
